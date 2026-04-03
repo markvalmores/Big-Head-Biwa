@@ -3,24 +3,13 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { 
-  doc, 
-  setDoc, 
-  getDoc, 
-  updateDoc, 
-  collection, 
-  query, 
-  orderBy, 
-  limit, 
-  onSnapshot
-} from 'firebase/firestore';
-import { db } from './firebase';
 import { Trophy, User as UserIcon, Play, MousePointer2, RefreshCw, RotateCcw } from 'lucide-react';
 
 // --- Types ---
 interface LeaderboardEntry {
+  id: string;
   name: string;
   score: number;
   updatedAt: string;
@@ -42,79 +31,62 @@ export default function App() {
   const [isGameStarted, setIsGameStarted] = useState(false);
   const [score, setScore] = useState(0);
   const [headScale, setHeadScale] = useState(1);
-  const [leaderboard, setLeaderboard] = useState<(LeaderboardEntry & { id: string })[]>([]);
+  const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [showLeaderboard, setShowLeaderboard] = useState(false);
 
   // --- Initial Setup ---
   useEffect(() => {
-    const loadExistingScore = async () => {
-      try {
-        const docRef = doc(db, 'leaderboard', playerId);
-        const docSnap = await getDoc(docRef);
-        if (docSnap.exists()) {
-          const data = docSnap.data() as LeaderboardEntry;
-          setScore(data.score);
-          setHeadScale(1 + (data.score * 0.05));
-        }
-      } catch (err) {
-        console.error("Error loading score:", err);
-      } finally {
-        setIsLoading(false);
-      }
-    };
-
-    loadExistingScore();
-  }, [playerId]);
-
-  // --- Leaderboard Listener ---
-  useEffect(() => {
-    const q = query(collection(db, 'leaderboard'), orderBy('score', 'desc'), limit(10));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const entries = snapshot.docs.map(doc => ({
-        ...(doc.data() as LeaderboardEntry),
-        id: doc.id
-      }));
-      setLeaderboard(entries);
-    }, (err) => {
-      console.error("Leaderboard error:", err);
-    });
-
-    return () => unsubscribe();
+    const savedScore = parseInt(localStorage.getItem('biwa_player_score') || '0', 10);
+    setScore(savedScore);
+    setHeadScale(1 + (savedScore * 0.05));
+    setIsLoading(false);
   }, []);
 
-  // --- Sync Score to Firestore ---
-  const syncScore = async (newScore: number) => {
-    if (!playerName) return;
-
-    const userDocRef = doc(db, 'leaderboard', playerId);
+  // --- Fetch Leaderboard ---
+  const fetchLeaderboard = useCallback(async () => {
     try {
-      const docSnap = await getDoc(userDocRef);
-      if (!docSnap.exists()) {
-        await setDoc(userDocRef, {
-          name: playerName,
-          score: newScore,
-          updatedAt: new Date().toISOString()
-        });
-      } else {
-        const currentData = docSnap.data() as LeaderboardEntry;
-        if (newScore > currentData.score) {
-          await updateDoc(userDocRef, {
-            score: newScore,
-            updatedAt: new Date().toISOString(),
-            name: playerName
-          });
-        }
+      const res = await fetch('/api/leaderboard');
+      if (res.ok) {
+        const data = await res.json();
+        setLeaderboard(data);
       }
     } catch (err) {
-      console.error("Sync error:", err);
+      console.error("Failed to fetch leaderboard", err);
     }
-  };
+  }, []);
+
+  // --- Leaderboard Polling ---
+  useEffect(() => {
+    fetchLeaderboard();
+    const interval = setInterval(fetchLeaderboard, 3000); // Poll every 3 seconds
+    return () => clearInterval(interval);
+  }, [fetchLeaderboard]);
+
+  // --- Sync Score to Server ---
+  const syncScoreToServer = useCallback(async (newScore: number) => {
+    if (!playerName) return;
+    try {
+      await fetch('/api/leaderboard', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: playerId,
+          name: playerName,
+          score: newScore
+        })
+      });
+      fetchLeaderboard(); // Optimistic update
+    } catch (err) {
+      console.error("Failed to sync score", err);
+    }
+  }, [playerId, playerName, fetchLeaderboard]);
 
   const handleStartGame = () => {
     if (playerName.trim().length > 0) {
       localStorage.setItem('biwa_player_name', playerName);
       setIsGameStarted(true);
+      syncScoreToServer(score); // Sync initial score when starting
     }
   };
 
@@ -122,7 +94,8 @@ export default function App() {
     const newScore = score + 1;
     setScore(newScore);
     setHeadScale(prev => prev + 0.05);
-    syncScore(newScore);
+    localStorage.setItem('biwa_player_score', newScore.toString());
+    syncScoreToServer(newScore);
   };
 
   const handleResetHead = () => {
