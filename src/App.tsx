@@ -300,7 +300,10 @@ export default function App() {
                     initial={{ opacity: 0, x: 20 }}
                     animate={{ opacity: 1, x: 0 }}
                     transition={{ delay: index * 0.05 }}
-                    className={`flex items-center justify-between p-3 sm:p-4 rounded-xl sm:rounded-2xl border ${
+                    className={`flex items-center justify-between p-3 sm:p-4 rounded-xl sm:rounded-2xl border transition-all ${
+                      index === 0 ? 'bg-yellow-400/20 border-yellow-400/50 shadow-[0_0_20px_rgba(250,204,21,0.15)] scale-[1.02]' :
+                      index === 1 ? 'bg-slate-300/20 border-slate-300/50 shadow-[0_0_15px_rgba(203,213,225,0.15)]' :
+                      index === 2 ? 'bg-orange-600/20 border-orange-600/50 shadow-[0_0_15px_rgba(234,88,12,0.15)]' :
                       entry.id === playerId 
                         ? 'bg-blue-500/20 border-blue-500/50' 
                         : 'bg-white/5 border-white/10'
@@ -308,14 +311,19 @@ export default function App() {
                   >
                     <div className="flex items-center gap-3 sm:gap-4">
                       <span className={`w-6 h-6 sm:w-8 sm:h-8 flex items-center justify-center rounded-lg font-bold text-xs sm:text-sm ${
-                        index === 0 ? 'bg-yellow-400 text-black' :
-                        index === 1 ? 'bg-gray-300 text-black' :
-                        index === 2 ? 'bg-amber-600 text-white' :
+                        index === 0 ? 'bg-yellow-400 text-black shadow-lg shadow-yellow-400/50' :
+                        index === 1 ? 'bg-slate-300 text-black shadow-lg shadow-slate-300/50' :
+                        index === 2 ? 'bg-orange-600 text-white shadow-lg shadow-orange-600/50' :
                         'bg-white/10 text-white/60'
                       }`}>
                         {index + 1}
                       </span>
-                      <span className="font-bold truncate max-w-[100px] sm:max-w-[120px] text-sm sm:text-base text-white">{entry.name}</span>
+                      <div className="flex flex-col">
+                        <span className="font-bold truncate max-w-[100px] sm:max-w-[120px] text-sm sm:text-base text-white">
+                          {entry.name}
+                          {entry.id === playerId && <span className="ml-2 text-[10px] bg-blue-500 px-1.5 py-0.5 rounded text-white uppercase tracking-tighter">You</span>}
+                        </span>
+                      </div>
                     </div>
                     <span className="font-black text-lg sm:text-xl text-white">{entry.score}</span>
                   </motion.div>
