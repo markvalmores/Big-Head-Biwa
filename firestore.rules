@@ -1,0 +1,23 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Helper functions
+    function isValidLeaderboardEntry(data) {
+      return data.name is string && data.name.size() > 0 && data.name.size() <= 50 &&
+             data.score is int && data.score >= 0 &&
+             data.updatedAt is string;
+    }
+
+    match /leaderboard/{playerId} {
+      // Allow public read for the leaderboard
+      allow read: if true;
+      
+      // Allow public create and update without authentication
+      // We still validate the data structure and ensure scores only go up
+      allow create: if isValidLeaderboardEntry(request.resource.data);
+      allow update: if isValidLeaderboardEntry(request.resource.data) &&
+                      request.resource.data.score >= resource.data.score;
+      allow delete: if false;
+    }
+  }
+}
