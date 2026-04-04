@@ -1,5 +1,5 @@
 {
   "name": "Big Head Biwa Clicker",
-  "description": "A fun clicker game where Biwa's head grows with every click! Compete on the global leaderboard.",
+  "description": "A fun clicker game where Biwa's head grows with every click! Compete on the global leaderboard powered by MongoDB.",
   "requestFramePermissions": []
 }

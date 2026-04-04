@@ -5,14 +5,27 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Trophy, User as UserIcon, Play, MousePointer2, RefreshCw, RotateCcw } from 'lucide-react';
+import { Trophy, User as UserIcon, Play, MousePointer2, RefreshCw, RotateCcw, AlertTriangle } from 'lucide-react';
+import { db } from './firebase';
+import { 
+  collection, 
+  query, 
+  orderBy, 
+  limit, 
+  onSnapshot, 
+  doc, 
+  setDoc, 
+  getDoc,
+  Timestamp,
+  serverTimestamp
+} from 'firebase/firestore';
 
 // --- Types ---
 interface LeaderboardEntry {
   id: string;
   name: string;
   score: number;
-  updatedAt: string;
+  updatedAt: any; // Can be string or Timestamp
 }
 
 // --- Helper to get/create a persistent Player ID ---
@@ -47,56 +60,63 @@ export default function App() {
     setIsLoading(false);
   }, []);
 
-  // --- Fetch Leaderboard ---
-  const fetchLeaderboard = useCallback(async (isInitial = false) => {
-    if (isInitial) setIsLeaderboardLoading(true);
+  // --- Firebase Real-time Leaderboard ---
+  useEffect(() => {
+    setIsLeaderboardLoading(true);
     setLeaderboardError(null);
-    try {
-      const res = await fetch('/api/leaderboard');
-      if (res.ok) {
-        const data = await res.json();
-        setLeaderboard(data);
-      } else {
-        setLeaderboardError("Failed to load leaderboard");
-      }
-    } catch (err) {
-      console.error("Failed to fetch leaderboard", err);
-      setLeaderboardError("Connection error");
-    } finally {
-      if (isInitial) setIsLeaderboardLoading(false);
-    }
+
+    const q = query(
+      collection(db, 'leaderboard'),
+      orderBy('score', 'desc'),
+      limit(10)
+    );
+
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const entries: LeaderboardEntry[] = [];
+      snapshot.forEach((doc) => {
+        entries.push({ id: doc.id, ...doc.data() } as LeaderboardEntry);
+      });
+      setLeaderboard(entries);
+      setIsLeaderboardLoading(false);
+    }, (error) => {
+      console.error("Firestore error:", error);
+      setLeaderboardError("Failed to connect to real-time leaderboard.");
+      setIsLeaderboardLoading(false);
+    });
+
+    return () => unsubscribe();
   }, []);
 
-  // --- Leaderboard Polling ---
-  useEffect(() => {
-    fetchLeaderboard(true);
-    const interval = setInterval(() => fetchLeaderboard(false), 5000); // Poll every 5 seconds
-    return () => clearInterval(interval);
-  }, [fetchLeaderboard]);
-
-  // --- Sync Score to Server ---
+  // --- Sync Score to Firestore ---
   const syncScoreToServer = useCallback(async (currentScore: number) => {
     if (!playerName || currentScore === 0) return;
     setIsSyncing(true);
     try {
-      const res = await fetch('/api/leaderboard', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          id: playerId,
-          name: playerName,
-          score: currentScore
-        })
-      });
-      if (res.ok) {
-        await fetchLeaderboard(false);
+      const playerDocRef = doc(db, 'leaderboard', playerId);
+      
+      // Check if we should update (only if score is higher)
+      const docSnap = await getDoc(playerDocRef);
+      if (docSnap.exists()) {
+        const existingData = docSnap.data();
+        if (currentScore <= (existingData.score || 0)) {
+          setIsSyncing(false);
+          return;
+        }
       }
+
+      await setDoc(playerDocRef, {
+        name: playerName,
+        score: currentScore,
+        updatedAt: serverTimestamp()
+      }, { merge: true });
+      
+      console.log("Score synced to Firestore");
     } catch (err) {
-      console.error("Failed to sync score", err);
+      console.error("Failed to sync score to Firestore", err);
     } finally {
       setIsSyncing(false);
     }
-  }, [playerId, playerName, fetchLeaderboard]);
+  }, [playerId, playerName]);
 
   // --- Debounced Sync ---
   useEffect(() => {
@@ -346,10 +366,10 @@ export default function App() {
                   <div className="bg-red-500/10 border border-red-500/20 p-4 rounded-xl text-center">
                     <p className="text-red-400 text-sm">{leaderboardError}</p>
                     <button 
-                      onClick={() => fetchLeaderboard()}
+                      onClick={() => window.location.reload()}
                       className="mt-2 text-xs text-white/60 hover:text-white underline"
                     >
-                      Try again
+                      Refresh page
                     </button>
                   </div>
                 )}
