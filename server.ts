@@ -1,6 +1,7 @@
 import express from "express";
 import { createServer as createViteServer } from "vite";
 import path from "path";
+import fs from "fs";
 
 interface LeaderboardEntry {
   id: string;
@@ -9,8 +10,26 @@ interface LeaderboardEntry {
   updatedAt: string;
 }
 
-// In-memory leaderboard store
+const LEADERBOARD_FILE = path.join(process.cwd(), "leaderboard.json");
+
+// Load leaderboard from file or initialize empty
 let leaderboard: LeaderboardEntry[] = [];
+try {
+  if (fs.existsSync(LEADERBOARD_FILE)) {
+    const data = fs.readFileSync(LEADERBOARD_FILE, "utf-8");
+    leaderboard = JSON.parse(data);
+  }
+} catch (err) {
+  console.error("Failed to load leaderboard from file:", err);
+}
+
+const saveLeaderboard = () => {
+  try {
+    fs.writeFileSync(LEADERBOARD_FILE, JSON.stringify(leaderboard, null, 2));
+  } catch (err) {
+    console.error("Failed to save leaderboard to file:", err);
+  }
+};
 
 async function startServer() {
   const app = express();
@@ -35,10 +54,10 @@ async function startServer() {
     const existingIndex = leaderboard.findIndex(entry => entry.id === id);
     
     if (existingIndex >= 0) {
-      // Only update if the new score is higher
+      // Update name always, update score if higher
+      leaderboard[existingIndex].name = name;
       if (score > leaderboard[existingIndex].score) {
         leaderboard[existingIndex].score = score;
-        leaderboard[existingIndex].name = name;
         leaderboard[existingIndex].updatedAt = new Date().toISOString();
       }
     } else {
@@ -50,6 +69,7 @@ async function startServer() {
       });
     }
 
+    saveLeaderboard();
     res.json({ success: true });
   });
 

@@ -33,7 +33,11 @@ export default function App() {
   const [headScale, setHeadScale] = useState(1);
   const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isLeaderboardLoading, setIsLeaderboardLoading] = useState(false);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [leaderboardError, setLeaderboardError] = useState<string | null>(null);
   const [showLeaderboard, setShowLeaderboard] = useState(false);
+  const [particles, setParticles] = useState<{id: string, x: number, y: number}[]>([]);
 
   // --- Initial Setup ---
   useEffect(() => {
@@ -44,59 +48,89 @@ export default function App() {
   }, []);
 
   // --- Fetch Leaderboard ---
-  const fetchLeaderboard = useCallback(async () => {
+  const fetchLeaderboard = useCallback(async (isInitial = false) => {
+    if (isInitial) setIsLeaderboardLoading(true);
+    setLeaderboardError(null);
     try {
       const res = await fetch('/api/leaderboard');
       if (res.ok) {
         const data = await res.json();
         setLeaderboard(data);
+      } else {
+        setLeaderboardError("Failed to load leaderboard");
       }
     } catch (err) {
       console.error("Failed to fetch leaderboard", err);
+      setLeaderboardError("Connection error");
+    } finally {
+      if (isInitial) setIsLeaderboardLoading(false);
     }
   }, []);
 
   // --- Leaderboard Polling ---
   useEffect(() => {
-    fetchLeaderboard();
-    const interval = setInterval(fetchLeaderboard, 3000); // Poll every 3 seconds
+    fetchLeaderboard(true);
+    const interval = setInterval(() => fetchLeaderboard(false), 5000); // Poll every 5 seconds
     return () => clearInterval(interval);
   }, [fetchLeaderboard]);
 
   // --- Sync Score to Server ---
-  const syncScoreToServer = useCallback(async (newScore: number) => {
-    if (!playerName) return;
+  const syncScoreToServer = useCallback(async (currentScore: number) => {
+    if (!playerName || currentScore === 0) return;
+    setIsSyncing(true);
     try {
-      await fetch('/api/leaderboard', {
+      const res = await fetch('/api/leaderboard', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           id: playerId,
           name: playerName,
-          score: newScore
+          score: currentScore
         })
       });
-      fetchLeaderboard(); // Optimistic update
+      if (res.ok) {
+        await fetchLeaderboard(false);
+      }
     } catch (err) {
       console.error("Failed to sync score", err);
+    } finally {
+      setIsSyncing(false);
     }
   }, [playerId, playerName, fetchLeaderboard]);
+
+  // --- Debounced Sync ---
+  useEffect(() => {
+    if (score > 0 && isGameStarted) {
+      const timeout = setTimeout(() => {
+        syncScoreToServer(score);
+      }, 1000); // Sync after 1 second of inactivity
+      return () => clearTimeout(timeout);
+    }
+  }, [score, isGameStarted, syncScoreToServer]);
 
   const handleStartGame = () => {
     if (playerName.trim().length > 0) {
       localStorage.setItem('biwa_player_name', playerName);
       setIsGameStarted(true);
-      syncScoreToServer(score); // Sync initial score when starting
+      if (score > 0) syncScoreToServer(score);
     }
   };
 
-  const handleClick = () => {
-    const newScore = score + 1;
-    setScore(newScore);
+  const handleClick = useCallback(() => {
+    setScore(prev => {
+      const next = prev + 1;
+      localStorage.setItem('biwa_player_score', next.toString());
+      return next;
+    });
     setHeadScale(prev => prev + 0.05);
-    localStorage.setItem('biwa_player_score', newScore.toString());
-    syncScoreToServer(newScore);
-  };
+    
+    // Create particle effect
+    const id = Math.random().toString(36).substring(7);
+    setParticles(prev => [...prev, { id, x: Math.random() * 40 - 20, y: Math.random() * 40 - 20 }]);
+    setTimeout(() => {
+      setParticles(prev => prev.filter(p => p.id !== id));
+    }, 1000);
+  }, [isGameStarted]);
 
   const handleResetHead = () => {
     setHeadScale(1);
@@ -115,10 +149,13 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-cover bg-center font-sans text-white overflow-hidden relative flex flex-col"
-         style={{ backgroundImage: `url('https://images.steamusercontent.com/ugc/11472047761628136170/68B1245C2D6EC6AA11B6BAE31A8D8B1AA71E4E21/?imw=637&imh=358&ima=fit&impolicy=Letterbox&imcolor=%23000000&letterbox=true')` }}>
+    <div className="min-h-screen bg-[#0a0a0a] bg-cover bg-center font-sans text-white overflow-hidden relative flex flex-col"
+         style={{ 
+           backgroundImage: `url('https://images.steamusercontent.com/ugc/11472047761628136170/68B1245C2D6EC6AA11B6BAE31A8D8B1AA71E4E21/?imw=637&imh=358&ima=fit&impolicy=Letterbox&imcolor=%23000000&letterbox=true')`,
+           backgroundAttachment: 'fixed'
+         }}>
       
-      <div className="absolute inset-0 bg-black/40 backdrop-blur-sm pointer-events-none" />
+      <div className="absolute inset-0 bg-black/40 backdrop-blur-sm pointer-events-none" style={{ transform: 'translateZ(0)' }} />
 
       <AnimatePresence mode="wait">
         {!isGameStarted ? (
@@ -187,7 +224,21 @@ export default function App() {
                 >
                   {score}
                 </motion.div>
-                <p className="text-white/60 uppercase tracking-widest font-bold text-[10px] sm:text-sm">Points</p>
+                <div className="flex flex-col items-center">
+                  <p className="text-white/60 uppercase tracking-widest font-bold text-[10px] sm:text-sm">Points</p>
+                  <AnimatePresence>
+                    {isSyncing && (
+                      <motion.p 
+                        initial={{ opacity: 0, y: 5 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0 }}
+                        className="text-blue-400 text-[8px] sm:text-[10px] font-bold uppercase tracking-tighter mt-1"
+                      >
+                        Syncing...
+                      </motion.p>
+                    )}
+                  </AnimatePresence>
+                </div>
               </div>
 
               <div className="relative flex flex-col items-center justify-center flex-1 w-full max-h-[60vh] sm:max-h-none">
@@ -196,10 +247,11 @@ export default function App() {
                     animate={{ scale: headScale }}
                     transition={{ 
                       type: "spring", 
-                      stiffness: 300, 
-                      damping: 15,
-                      mass: 1
+                      stiffness: 400, 
+                      damping: 20,
+                      mass: 0.8
                     }}
+                    style={{ willChange: 'transform', transform: 'translateZ(0)' }}
                     className="relative z-20 origin-bottom"
                   >
                     <img 
@@ -207,15 +259,31 @@ export default function App() {
                       alt="Biwa Head"
                       className="w-32 h-32 sm:w-48 sm:h-48 object-cover rounded-full border-4 border-white shadow-2xl"
                       referrerPolicy="no-referrer"
+                      loading="eager"
                     />
+                    
+                    <AnimatePresence>
+                      {particles.map(p => (
+                        <motion.div
+                          key={p.id}
+                          initial={{ opacity: 1, scale: 0, x: 0, y: 0 }}
+                          animate={{ opacity: 0, scale: 1.5, x: p.x * 5, y: p.y * 5 - 100 }}
+                          exit={{ opacity: 0 }}
+                          className="absolute inset-0 flex items-center justify-center pointer-events-none"
+                        >
+                          <div className="w-4 h-4 bg-yellow-400 rounded-full blur-sm" />
+                        </motion.div>
+                      ))}
+                    </AnimatePresence>
                   </motion.div>
                   
-                  <div className="relative z-10 -mt-2 sm:-mt-4">
+                  <div className="relative z-10 -mt-2 sm:-mt-4" style={{ willChange: 'transform', transform: 'translateZ(0)' }}>
                     <img 
                       src="https://image2url.com/r2/default/images/1775214898505-a87b2fae-57f1-4a16-b152-14c952297fbc.jpg"
                       alt="Biwa Body"
                       className="w-28 h-40 sm:w-40 sm:h-56 object-cover rounded-2xl border-4 border-white shadow-xl"
                       referrerPolicy="no-referrer"
+                      loading="eager"
                     />
                   </div>
                 </div>
@@ -266,7 +334,26 @@ export default function App() {
                 </button>
               </div>
 
-              <div className="flex-1 space-y-2 sm:space-y-3 overflow-y-auto pr-2 custom-scrollbar">
+              <div className="flex-1 space-y-2 sm:space-y-3 overflow-y-auto pr-2 custom-scrollbar scroll-smooth">
+                {isLeaderboardLoading && leaderboard.length === 0 && (
+                  <div className="flex flex-col items-center justify-center py-10 gap-3">
+                    <RefreshCw className="animate-spin text-blue-500" size={24} />
+                    <p className="text-white/40 text-sm">Loading scores...</p>
+                  </div>
+                )}
+                
+                {leaderboardError && (
+                  <div className="bg-red-500/10 border border-red-500/20 p-4 rounded-xl text-center">
+                    <p className="text-red-400 text-sm">{leaderboardError}</p>
+                    <button 
+                      onClick={() => fetchLeaderboard()}
+                      className="mt-2 text-xs text-white/60 hover:text-white underline"
+                    >
+                      Try again
+                    </button>
+                  </div>
+                )}
+
                 {leaderboard.map((entry, index) => (
                   <motion.div 
                     key={entry.id}
@@ -301,7 +388,7 @@ export default function App() {
                     <span className="font-black text-lg sm:text-xl text-white">{entry.score}</span>
                   </motion.div>
                 ))}
-                {leaderboard.length === 0 && (
+                {leaderboard.length === 0 && !isLeaderboardLoading && !leaderboardError && (
                   <p className="text-center text-white/40 py-10">No scores yet. Be the first!</p>
                 )}
               </div>
